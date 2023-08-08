@@ -1685,7 +1685,12 @@ export default class Optimizely implements Client {
     const projectConfig = this.projectConfigManager.getConfig();
     if (this.odpManager != null && projectConfig != null) {
       this.odpManager.updateSettings(
-        new OdpConfig(projectConfig.publicKeyForOdp, projectConfig.hostForOdp, projectConfig.allSegments)
+        new OdpConfig(
+          projectConfig.publicKeyForOdp,
+          projectConfig.hostForOdp,
+          projectConfig.allSegments,
+          projectConfig.odpRegion
+        )
       );
     }
   }

@@ -59,10 +59,25 @@ export class OdpConfig {
     return this._segmentsToCheck;
   }
 
-  constructor(apiKey?: string, apiHost?: string, segmentsToCheck?: string[]) {
+  /**
+   * Odp integration region (optional).
+   * @private
+   */
+  private _odpRegion: string;
+
+  /**
+   * Getter to retrieve the ODP API key
+   * @public
+   */
+  get odpRegion(): string {
+    return this._odpRegion;
+  }
+
+  constructor(apiKey?: string, apiHost?: string, segmentsToCheck?: string[], odpRegion?: string) {
     this._apiKey = apiKey ?? '';
     this._apiHost = apiHost ?? '';
     this._segmentsToCheck = segmentsToCheck ?? [];
+    this._odpRegion = odpRegion ?? '';
   }
 
   /**
@@ -77,7 +92,7 @@ export class OdpConfig {
       if (config.apiKey) this._apiKey = config.apiKey;
       if (config.apiHost) this._apiHost = config.apiHost;
       if (config.segmentsToCheck) this._segmentsToCheck = config.segmentsToCheck;
-
+      if (config.odpRegion) this._odpRegion = config._odpRegion;
       return true;
     }
   }
@@ -98,6 +113,7 @@ export class OdpConfig {
     return (
       this._apiHost === configToCompare._apiHost &&
       this._apiKey === configToCompare._apiKey &&
+      this._odpRegion === configToCompare._odpRegion &&
       checkArrayEquality(this.segmentsToCheck, configToCompare._segmentsToCheck)
     );
   }
