@@ -30,10 +30,9 @@ const MAX_RETRIES = 3;
 /**
  * Event dispatcher's execution states
  */
-export enum STATE {
-  STOPPED,
-  RUNNING,
-  PROCESSING,
+export enum Status {
+  Stopped,
+  Running,
 }
 
 /**
@@ -62,7 +61,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
   /**
    * Current state of the event processor
    */
-  state: STATE = STATE.STOPPED;
+  status: Status = Status.Stopped;
 
   /**
    * Queue for holding all events to be eventually dispatched
@@ -80,7 +79,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
    * ODP configuration settings for identifying the target API and segments
    * @private
    */
-  private odpConfig: OdpConfig;
+  private odpConfig?: OdpConfig;
 
   /**
    * REST API Manager used to send the events
@@ -148,7 +147,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
     flushInterval,
     userAgentParser,
   }: {
-    odpConfig: OdpConfig;
+    odpConfig?: OdpConfig;
     apiManager: IOdpEventApiManager;
     logger: LogHandler;
     clientEngine: string;
@@ -164,7 +163,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
     this.clientEngine = clientEngine;
     this.clientVersion = clientVersion;
     this.initParams(batchSize, queueSize, flushInterval);
-    this.state = STATE.STOPPED;
+    this.status = Status.Stopped;
     this.userAgentParser = userAgentParser;
 
     if (userAgentParser) {
@@ -182,7 +181,9 @@ export abstract class OdpEventManager implements IOdpEventManager {
       );
     }
 
-    this.apiManager.updateSettings(odpConfig);
+    if (odpConfig) {
+      this.updateSettings(odpConfig);
+    }
   }
 
   protected abstract initParams(
@@ -195,8 +196,25 @@ export abstract class OdpEventManager implements IOdpEventManager {
    * Update ODP configuration settings.
    * @param newConfig New configuration to apply
    */
-  updateSettings(newConfig: OdpConfig): void {
-    this.odpConfig = newConfig;
+  updateSettings(odpConfig: OdpConfig): void {
+    // do nothing if config did not change
+    if (this.odpConfig && this.odpConfig.equals(odpConfig)) {
+      return;
+    }
+
+    this.odpConfig = odpConfig;
+    this.apiManager.updateSettings(odpConfig);
+
+    if (odpConfig.integrated) {
+      // already running, just propagate updated config to children;
+      if (this.status === Status.Running) {
+        
+      } else {
+        this.start(odpConfig);
+      }
+    }
+
+    // this.odpConfig = newConfig;
     this.apiManager.updateSettings(newConfig);
   }
 
@@ -211,7 +229,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
    * Start processing events in the queue
    */
   start(): void {
-    this.state = STATE.RUNNING;
+    this.status = Status.Running;
 
     this.setNewTimeout();
   }
@@ -224,7 +242,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
 
     await this.processQueue(true);
 
-    this.state = STATE.STOPPED;
+    this.status = Status.Stopped;
     this.logger.log(LogLevel.DEBUG, 'Stopped. Queue Count: %s', this.queue.length);
   }
 
@@ -283,7 +301,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
    * @private
    */
   private enqueue(event: OdpEvent): void {
-    if (this.state === STATE.STOPPED) {
+    if (this.status === Status.Stopped) {
       this.logger.log(LogLevel.WARNING, 'Failed to Process ODP Event. ODPEventManager is not running.');
       return;
     }
@@ -315,11 +333,11 @@ export abstract class OdpEventManager implements IOdpEventManager {
    * @private
    */
   private processQueue(shouldFlush = false): void {
-    if (this.state !== STATE.RUNNING) {
+    if (this.status !== Status.Running) {
       return;
     }
 
-    if (!this.isOdpConfigurationReady()) {
+    if (!this.odpConfig || !this.odpConfig.integrated) {
       return;
     }
 
@@ -328,7 +346,7 @@ export abstract class OdpEventManager implements IOdpEventManager {
       // clear the queue completely
       this.clearCurrentTimeout();
 
-      this.state = STATE.PROCESSING;
+      this.status = Status.PROCESSING;
 
       while (this.queueContainsItems()) {
         this.makeAndSend1Batch();
@@ -338,14 +356,14 @@ export abstract class OdpEventManager implements IOdpEventManager {
     else if (this.queueHasBatches()) {
       this.clearCurrentTimeout();
 
-      this.state = STATE.PROCESSING;
+      this.status = Status.PROCESSING;
 
       while (this.queueHasBatches()) {
         this.makeAndSend1Batch();
       }
     }
 
-    this.state = STATE.RUNNING;
+    this.status = Status.Running;
     this.setNewTimeout();
   }
 
@@ -415,20 +433,6 @@ export abstract class OdpEventManager implements IOdpEventManager {
    */
   private queueContainsItems(): boolean {
     return this.queue.length > 0;
-  }
-
-  /**
-   * Check if the ODP Configuration is ready and log if not.
-   * Potentially clear queue if server-side
-   * @returns True if the ODP configuration is ready otherwise False
-   * @private
-   */
-  private isOdpConfigurationReady(): boolean {
-    if (this.odpConfig.isReady()) {
-      return true;
-    }
-    this.discardEventsIfNeeded();
-    return false;
   }
 
   protected abstract discardEventsIfNeeded(): void;

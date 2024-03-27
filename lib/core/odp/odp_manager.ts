@@ -26,16 +26,18 @@ import { IOdpSegmentManager } from './odp_segment_manager';
 import { OptimizelySegmentOption } from './optimizely_segment_option';
 import { invalidOdpDataFound } from './odp_utils';
 import { OdpEvent } from './odp_event';
+import { resolvablePromise } from '../../utils/promise/resolvablePromise';
 
 /**
  * Manager for handling internal all business logic related to
  * Optimizely Data Platform (ODP) / Advanced Audience Targeting (AAT)
  */
 export interface IOdpManager {
-  onInit(): Promise<void>;
+  onReady(): Promise<unknown>;
   // initPromise?: Promise<void>;
 
-  enabled: boolean;
+  // enabled: boolean;
+  isReady(): boolean;
 
   segmentManager: IOdpSegmentManager | undefined;
 
@@ -43,7 +45,7 @@ export interface IOdpManager {
 
   updateSettings(odpConfig: OdpConfig): boolean;
 
-  close(): void;
+  stop(): void;
 
   fetchQualifiedSegments(userId: string, options?: Array<OptimizelySegmentOption>): Promise<string[] | null>;
 
@@ -53,9 +55,12 @@ export interface IOdpManager {
 
   isVuidEnabled(): boolean;
 
-  initializeVuid(): Promise<void>;
-
   getVuid(): string | undefined;
+}
+
+enum Status {
+  Running,
+  Stopped,
 }
 
 /**
@@ -65,15 +70,17 @@ export abstract class OdpManager implements IOdpManager {
   /**
    * Promise that returns when the OdpManager is finished initializing
    */
-  initPromise?: Promise<void>;
+  initPromise: Promise<unknown>;
+  
+  private ready: boolean = false;
 
   /**
-   * Switch to enable/disable ODP Manager functionality
+   * Promise that resolves when odpConfig becomes available
    */
-  enabled: boolean;
+  configPromise: resolvablePromise<void>;
 
-  vuidManger: VuidManager;
-  
+  status: Status;
+
   /**
    * ODP Segment Manager which provides an interface to the remote ODP server (GraphQL API) for audience segments mapping.
    * It fetches all qualified segments for the given user context and manages the segments cache for all user contexts.
@@ -110,68 +117,104 @@ export abstract class OdpManager implements IOdpManager {
     segmentManger: IOdpSegmentManager;
     eventManager: IOdpEventManager;
   }) {
-    this.enabled = !!odpConfig;
+    // this.enabled = !!odpConfig;
     this.odpConfig = odpConfig;
-    this.vuidManger = vuidManager;
     this.segmentManager = segmentManger;
     this.eventManager = eventManager;
+    this.configPromise = resolvablePromise();
 
+    const readineessDependencies = [this.configPromise];
+
+    if (this.isVuidEnabled()) {
+      readineessDependencies.push(this.initializeVuid());
+    }
+
+    this.initPromise = Promise.all(readineessDependencies);
+
+    this.onReady().then(() => {
+      this.ready = true;
+      if(this.isVuidEnabled()) {
+        this.registerVuid();
+      }
+    });
+
+    if (odpConfig) {
+      this.updateSettings(odpConfig);
+    }
   }
 
+  start(odpConfig?: OdpConfig): Promise<void> {
+    if (odpConfig) {
+      this.odpConfig = odpConfig;
+    }
+    
+    if (!this.odpConfig) {
+      return Promise.reject(new Error('cannot start without ODP config'));      
+    }
 
+    if (!this.odpConfig.integrated) {
+      return Promise.reject(new Error('start() called with non-integrated ODP config'));
+    }
 
-  // start(): Promise<void> {
-  //   return Promise.resolve();
-  // }
+    this.configPromise.resolve();
+    this.status = Status.Running;
+    this.segmentManager.updateSettings(this.odpConfig);
+    this.eventManager.updateSettings(this.odpConfig);
+  }
 
   // stop(): Promise<void> {
   //   return Promise.resolve();
   // }
 
-  onInit(): Promise<void> {
+  onReady(): Promise<unknown> {
     return this.initPromise;
   }
 
+  isReady(): boolean {
+    return this.ready;
+  }
+
   /**
-   * Provides a method to update ODP Manager's ODP Config API Key, API Host, and Audience Segments
+   * Provides a method to update ODP Manager's ODP Config
    */
   updateSettings(odpConfig: OdpConfig): boolean {
-    if (!odpConfig.integrated) {
-      this.close();
-    }
-
-    if (!this.enabled) {
+    // do nothing if config did not change
+    if (this.odpConfig && this.odpConfig.equals(odpConfig)) {
       return false;
     }
 
-    if (!this.eventManager) {
-      this.logger.log(LogLevel.ERROR, ERROR_MESSAGES.ODP_MANAGER_UPDATE_SETTINGS_FAILED_EVENT_MANAGER_MISSING);
-      return false;
+    if (odpConfig.integrated) {
+      // already running, just propagate updated config to children;
+      if (this.status === Status.Running) {
+        this.segmentManager.updateSettings(odpConfig);
+        this.eventManager.updateSettings(odpConfig);
+      } else {
+        this.start(odpConfig);
+      }
     }
 
-    if (!this.segmentManager) {
-      this.logger.log(LogLevel.ERROR, ERROR_MESSAGES.ODP_MANAGER_UPDATE_SETTINGS_FAILED_SEGMENTS_MANAGER_MISSING);
-      return false;
-    }
+    // if (!odpConfig.integrated) {
+    //   this.close();
+    // }
 
-    this.eventManager.flush();
+    // this.eventManager.flush();
 
-    const newConfig = new OdpConfig(apiKey, apiHost, pixelUrl, segmentsToCheck);
-    const configDidUpdate = this.odpConfig.update(newConfig);
+    // const newConfig = new OdpConfig(apiKey, apiHost, pixelUrl, segmentsToCheck);
+    // const configDidUpdate = this.odpConfig.update(newConfig);
 
-    if (configDidUpdate) {
-      this.odpConfig.update(newConfig);
-      this.segmentManager?.reset();
-      return true;
-    }
+    // if (configDidUpdate) {
+    //   this.odpConfig.update(newConfig);
+    //   this.segmentManager?.reset();
+    //   return true;
+    // }
 
-    return false;
+    // return false;
   }
 
   /**
    * Attempts to stop the current instance of ODP Manager's event manager, if it exists and is running.
    */
-  close(): void {
+  stop(): void {
     if (!this.enabled) {
       return;
     }
@@ -277,4 +320,21 @@ export abstract class OdpManager implements IOdpManager {
    * Returns VUID value if it exists
    */
   abstract getVuid(): string | undefined;
+
+  protected initializeVuid(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  private registerVuid() {
+    const vuid = this.getVuid();
+    if (!vuid) {
+      return;
+    }
+
+    try {
+      this.eventManager.registerVuid(vuid);
+    } catch (e) {
+      this.logger.log(LogLevel.ERROR, ERROR_MESSAGES.ODP_VUID_REGISTRATION_FAILED);
+    }
+  }
 }

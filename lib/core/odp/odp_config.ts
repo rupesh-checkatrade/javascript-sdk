@@ -16,21 +16,36 @@
 
 import { checkArrayEquality } from '../../utils/fns';
 
-export type NoOdpIntegrationConfig = {
-  readonly integrated: false;
+export class NoOdpIntegrationConfig {
+  readonly integrated = false;
+
+  equals(odpConfig: OdpConfig): boolean {
+    return areOdpConfigsEqual(this, odpConfig);
+  }
 }
 
-export type OdpIntegrationConfig = {
-  readonly integrated: true;
+export const noOdpIntegrationConfig = new NoOdpIntegrationConfig();
+
+export class OdpIntegrationConfig {
+  readonly integrated = true;
   readonly apiHost: string;
   readonly apiKey: string;
-  readonly pixelUrl?: string;
-  readonly segmentsToCheck?: string[];
+  readonly pixelUrl: string;
+  readonly segmentsToCheck: string[];
+
+  constructor(apiHost: string, apiKey: string, pixelUrl: string, segmentsToCheck: string[]) {
+    this.apiHost = apiHost;
+    this.apiKey = apiKey;
+    this.pixelUrl = pixelUrl;
+    this.segmentsToCheck = segmentsToCheck;
+  }
+
+  equals(odpConfig: OdpConfig): boolean {
+    return areOdpConfigsEqual(this, odpConfig);
+  }
 }
 
-export type OdpConfig = (NoOdpIntegrationConfig | OdpIntegrationConfig) & {
-  equals(odpConfig: OdpConfig): boolean;
-}
+export type OdpConfig = NoOdpIntegrationConfig | OdpIntegrationConfig
 
 function areOdpConfigsEqual(config1: OdpConfig, config2: OdpConfig): boolean {
   if (config1.integrated !== config2.integrated) {
@@ -41,37 +56,10 @@ function areOdpConfigsEqual(config1: OdpConfig, config2: OdpConfig): boolean {
       config1.apiHost === config2.apiHost &&
       config1.apiKey === config2.apiKey &&
       config1.pixelUrl === config2.pixelUrl &&
-      checkArrayEquality(config1.segmentsToCheck || [], config2.segmentsToCheck || [])
+      checkArrayEquality(config1.segmentsToCheck, config2.segmentsToCheck)
     );
   }
   return true;
-}
-
-export function createOdpIntegrationConfig(
-  apiHost: string,
-  apiKey: string,
-  pixelUrl?: string,
-  segmentsToCheck?: string[]
-): OdpConfig {
-  return {
-    integrated: true,
-    apiHost,
-    apiKey,
-    pixelUrl,
-    segmentsToCheck,
-    equals: function(odpConfig: OdpConfig) {
-      return areOdpConfigsEqual(this, odpConfig)
-    }
-  };
-}
-
-export function createNoOdpIntegrationConfig(): OdpConfig {
-  return {
-    integrated: false,
-    equals: function (odpConfig: OdpConfig) {
-      return areOdpConfigsEqual(this, odpConfig)
-    }
-  };
 }
 
 // export class OdpConfig {

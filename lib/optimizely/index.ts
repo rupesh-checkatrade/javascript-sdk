@@ -1317,7 +1317,7 @@ export default class Optimizely implements Client {
   close(): Promise<{ success: boolean; reason?: string }> {
     try {
       if (this.odpManager) {
-        this.odpManager.close();
+        this.odpManager.stop();
       }
 
       this.notificationCenter.clearAllNotificationListeners();
